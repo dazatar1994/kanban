@@ -1,0 +1,47 @@
+// src/services/apiService.js
+import axios from 'axios';
+
+const API_URL = 'http://localhost:3000'; // Убедитесь, что адрес совпадает с адресом вашего сервера
+
+const api = axios.create({
+    baseURL: API_URL,
+    headers: {
+        'Content-Type': 'application/json',
+    },
+});
+
+// Методы API
+export default {
+    // Получить все колонки
+    getColumns() {
+        return api.get('/columns');
+    },
+    // Создать колонку
+    createColumn(column) {
+        return api.post('/columns', column);
+    },
+    // Обновить колонку
+    updateColumn(id, column) {
+        return api.put(`/columns/${id}`, column);
+    },
+    // Удалить колонку
+    deleteColumn(id) {
+        return api.delete(`/columns/${id}`);
+    },
+    // Получить все задачи
+    getTasks() {
+        return api.get('/tasks');
+    },
+    // Создать задачу
+    createTask(task) {
+        return api.post('/tasks', task);
+    },
+    // Обновить задачу
+    updateTask(id, task) {
+        return api.put(`/tasks/${id}`, task);
+    },
+    // Удалить задачу
+    deleteTask(id) {
+        return api.delete(`/tasks/${id}`);
+    },
+};
