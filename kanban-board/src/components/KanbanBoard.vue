@@ -1,4 +1,41 @@
 <template>
+	<!-- Модальное окно для описания задачи -->
+	<div v-if="showTaskDescription" class="modal-overlay" @click.self="closeTaskDescriptionModal">
+		<div class="modal-window">
+			<h3>{{ selectedTask?.title || 'Задача' }}</h3>
+			<textarea v-model="selectedTask.description" class="description-input"
+				placeholder="Введите описание задачи..."></textarea>
+			<div v-if="username == selectedTask.createdBy">
+				<label>Дата начала:</label>
+				<input type="date" v-model="selectedTask.startDate" />
+			</div>
+			<div v-if="username == selectedTask.createdBy">
+				<label>Дедлайн:</label>
+				<input type="date" v-model="selectedTask.dueDate" />
+			</div>
+			<div class="task-status">
+				<span v-for="status in ['urgent', 'soon', 'not-urgent']" :key="status"
+					:class="['status-indicator', status]"
+					@click="changeTaskStatus(selectedTaskcolumnIndex, selectedTasktaskIndex, status)" :title="status"
+					:style="{ opacity: selectedTask.status === status ? 1 : 0.6 }"></span>
+			</div>
+			<div class="assign-container" v-if="username == selectedTask.createdBy">
+				<label for="assignee">Назначить:</label>
+				<select v-model="selectedTask.assignee"
+					@change="updateAssignee(selectedTaskcolumnIndex, selectedTasktaskIndex)">
+					<option v-for="user in users" :key="user.id" :value="user.username">
+						{{ user.username }}
+					</option>
+				</select>
+			</div>
+			<div class="modal-buttons">
+				<button class="save-btn" @click="saveTaskDescription">Сохранить</button>
+				<button class="close-btn" @click="closeTaskDescriptionModal">Закрыть</button>
+			</div>
+		</div>
+	</div>
+
+
 	<!-- Модальное окно для удаления задачи -->
 	<div v-if="dialogDeleteTask" class="modal-overlay" @click.self="closeTaskDialog">
 		<div class="modal-window">
@@ -101,7 +138,8 @@
 		<div v-for="(column, columnIndex) in filteredColumns" :key="column.id" class="kanban-column" :style="{
 			backgroundColor: column.color || '#f4f4f4',
 			color: column.textColor || '#000',
-		}">
+		}" :class="{ 'done-column': column.isDone }">
+			<input type="checkbox" :checked="column.isDone" @change="setDoneColumn(columnIndex)" />
 			<div class="kanban-column-header">
 				<span v-if="column.icon" class="column-icon">
 					<i :class="column.icon"></i>
@@ -137,30 +175,26 @@
 			<draggable v-model="column.tasks" :group="'tasks-group'" @end="onDragEnd" :data-column-id="column.id"
 				class="kanban-tasks" :item-key="'id'" :animation="200">
 				<template #item="{ element, index }">
+
 					<div class="kanban-task" :status="element.status"
 						:class="{ 'current-user-task': element.assignee === username }">
 						<div class="task-info">
 							<textarea class="task-title" v-model="element.title" @input="adjustHeight($event)"
-								@blur="saveTask(columnIndex, index)" rows="1" maxlength="255"></textarea>
+								@keyup="saveTask(columnIndex, index)" rows="1" maxlength="255"></textarea>
 							<p class="task-created-by">Создано: {{ element.createdBy }}</p>
 							<p class="task-assignee">Назначено: <strong>{{ element.assignee }}</strong></p>
 						</div>
+						<button class="description-btn" @click="openTaskDescriptionModal(columnIndex, index)">
+							Описание
+						</button>
 
-						<div class="assign-container">
-							<label for="assignee">Назначить:</label>
-							<select v-model="element.assignee" @change="updateAssignee(columnIndex, index)">
-								<option :value="username">{{ username }} (Вы)</option>
-								<option v-for="user in otherUsers" :key="user" :value="user">{{ user }}</option>
-							</select>
+						<div v-if="isTaskOverdue(element.dueDate)" class="overdue-alert">
+							<span>Просрочена!</span>
 						</div>
 
+
 						<div class="task-actions">
-							<div class="task-status">
-								<span v-for="status in ['urgent', 'soon', 'not-urgent']" :key="status"
-									:class="['status-indicator', status]"
-									@click="changeTaskStatus(columnIndex, index, status)" :title="status"
-									:style="{ opacity: element.status === status ? 1 : 0.6 }"></span>
-							</div>
+
 							<button class="action-btn delete-btn" @click="openDeleteTaskDialog(columnIndex, index)">
 								Удалить
 							</button>
@@ -201,7 +235,7 @@ export default {
 	},
 	data() {
 		return {
-			username: 'admin', // Для тестирования
+			username: null, // Для тестирования
 			taskFilter: '',
 			statusFilter: '',
 			columns: [], // Данные загружаются с сервера
@@ -217,12 +251,100 @@ export default {
 			taskToDelete: null,
 			columnToDelete: null,
 			currentRole: null, // Текущая роль пользователя
-
+			users: [], // Список пользователей из базы данных
+			showTaskDescription: false, // Отображение модального окна
+			selectedTask: null, // Выбранная задача
+			selectedTaskcolumnIndex: null,
+			selectedTasktaskIndex: null,
 
 
 		};
 	},
 	methods: {
+		setDoneColumn(columnIndex) {
+			this.columns.forEach((column, index) => {
+				column.isDone = index === columnIndex; // Только одна колонка может быть Done
+			});
+			this.saveDoneColumn();
+		},
+		async saveDoneColumn() {
+			try {
+				const doneColumn = this.columns.find((column) => column.isDone);
+				const response = await fetch(`http://localhost:3000/api/columns/set-done`, {
+					method: "POST",
+					headers: this.getAuthHeaders(),
+					body: JSON.stringify({ columnId: doneColumn?.id || null }),
+				});
+				if (!response.ok) throw new Error("Ошибка при сохранении Done-колонки");
+			} catch (error) {
+				console.error("Ошибка при сохранении Done-колонки:", error);
+			}
+		},
+		openTaskDescriptionModal(columnIndex, taskIndex) {
+			this.selectedTask = this.columns[columnIndex].tasks[taskIndex];
+			this.showTaskDescription = true;
+			this.selectedTaskcolumnIndex = columnIndex;
+			this.selectedTasktaskIndex = taskIndex;
+		},
+		closeTaskDescriptionModal() {
+			this.selectedTask = null;
+			this.showTaskDescription = false;
+			this.selectedTaskcolumnIndex = null;
+			this.selectedTasktaskIndex = null;
+		},
+		async saveTaskDescription() {
+			if (!this.selectedTask) return;
+
+			try {
+				const response = await fetch(`http://localhost:3000/api/tasks/${this.selectedTask.id}`, {
+					method: 'PUT',
+					headers: this.getAuthHeaders(),
+					body: JSON.stringify(this.selectedTask),
+				});
+
+				if (!response.ok) {
+					throw new Error('Ошибка при сохранении описания задачи');
+				}
+
+				this.closeTaskDescriptionModal();
+			} catch (error) {
+				console.error('Ошибка при сохранении описания задачи:', error);
+			}
+		},
+		initializeUsername() {
+			this.username = localStorage.getItem('username'); // Получаем имя пользователя из LocalStorage
+			if (!this.username) {
+				// Если имени нет, перенаправляем на страницу входа
+				this.$router.push('/login');
+			}
+		},
+		async fetchUsers() {
+			try {
+				const response = await fetch("http://localhost:3000/api/users", {
+					headers: {
+						"Content-Type": "application/json",
+						Authorization: `Bearer ${localStorage.getItem("token")}`,
+					},
+				});
+				if (!response.ok) throw new Error("Ошибка при получении пользователей");
+
+				this.users = await response.json();
+			} catch (error) {
+				console.error("Ошибка при загрузке списка пользователей:", error);
+			}
+		},
+		formatDateToYMD(dateString) {
+			const date = new Date(dateString);
+			const year = date.getFullYear();
+			const month = String(date.getMonth() + 1).padStart(2, '0'); // Месяцы начинаются с 0
+			const day = String(date.getDate()).padStart(2, '0');
+			return `${year}-${month}-${day}`;
+		},
+		isTaskOverdue(dueDate) {
+			if (!dueDate) return false;
+			const today = new Date();
+			return new Date(dueDate) < today;
+		},
 		getAuthHeaders() {
 			const token = localStorage.getItem('token');
 			return {
@@ -237,6 +359,26 @@ export default {
 		closeTaskDialog() {
 			this.dialogDeleteTask = false;
 			this.taskToDelete = null;
+		},
+		async deleteTask(columnIndex, taskIndex) {
+			const taskId = this.columns[columnIndex].tasks[taskIndex]?.id;
+			if (!taskId) return;
+
+			try {
+				const response = await fetch(`http://localhost:3000/api/tasks/${taskId}`, {
+					method: 'DELETE',
+					headers: this.getAuthHeaders(),
+				});
+
+				if (!response.ok) {
+					throw new Error('Ошибка при удалении задачи');
+				}
+
+				// Удаляем задачу из массива
+				this.columns[columnIndex].tasks.splice(taskIndex, 1);
+			} catch (error) {
+				console.error('Ошибка при удалении задачи:', error);
+			}
 		},
 		async confirmDeleteTask() {
 			if (!this.taskToDelete) return;
@@ -552,7 +694,7 @@ export default {
 				const newTask = {
 					title: 'Новая задача',
 					status: 'not-urgent',
-					createdBy: this.username,
+					createdBy: this.username, // Используем имя текущего пользователя
 					columnId: this.columns[columnIndex].id,
 				};
 				await fetch('http://localhost:3000/api/tasks', {
@@ -567,23 +709,11 @@ export default {
 
 		async saveTask(columnIndex, taskIndex) {
 			const task = this.columns[columnIndex].tasks[taskIndex];
+			console.log(task)
 			try {
 				await fetch(`http://localhost:3000/api/tasks/${task.id}`, {
 					method: 'PUT',
 					headers: this.getAuthHeaders(),
-					body: JSON.stringify(task),
-				});
-			} catch (error) {
-				console.error('Ошибка при сохранении задачи:', error);
-			}
-		},
-
-		async saveTask(columnIndex, taskIndex) {
-			const task = this.columns[columnIndex].tasks[taskIndex];
-			try {
-				await fetch(`http://localhost:3000/api/tasks/${task.id}`, {
-					method: 'PUT',
-					headers: { 'Content-Type': 'application/json' },
 					body: JSON.stringify(task),
 				});
 			} catch (error) {
@@ -681,6 +811,8 @@ export default {
 	},
 
 	async mounted() {
+		this.initializeUsername();
+
 		try {
 			// Получаем текущую роль пользователя
 			this.currentRole = authService.getUserRole();
@@ -693,6 +825,7 @@ export default {
 
 			// Загружаем данные колонок
 			await this.fetchColumns();
+			await this.fetchUsers(); // Загружаем список пользователей при загрузке компонента
 
 			for (const column of this.columns) {
 				for (const task of column.tasks) {
@@ -718,13 +851,17 @@ export default {
 	},
 
 	computed: {
+
 		progress() {
+			const doneColumn = this.columns.find((column) => column.isDone);
+			if (!doneColumn) return 0;
+
 			const totalTasks = this.columns.reduce(
-				(acc, column) => acc + (Array.isArray(column.tasks) ? column.tasks.length : 0),
+				(acc, column) => acc + (column.tasks ? column.tasks.length : 0),
 				0
 			);
-			const doneColumn = this.columns.find((column) => column.title === 'Done');
-			const doneTasks = doneColumn && Array.isArray(doneColumn.tasks) ? doneColumn.tasks.length : 0;
+			const doneTasks = doneColumn.tasks ? doneColumn.tasks.length : 0;
+
 			return totalTasks > 0 ? Math.round((doneTasks / totalTasks) * 100) : 0;
 		},
 		currentRole() {

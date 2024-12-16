@@ -6,6 +6,7 @@ const bcrypt = require('bcrypt');
 const http = require('http');
 const WebSocket = require('ws');
 require('dotenv').config();
+const { format } = require('date-fns');
 
 const JWT_SECRET = process.env.JWT_SECRET;
 if (!JWT_SECRET) {
@@ -67,9 +68,11 @@ router.post('/auth/register', async (req, res) => {
 		const hashedPassword = await bcrypt.hash(password, 10);
 		const user = await User.create({ username, password: hashedPassword, role });
 
-		const token = jwt.sign({ id: user.id, role: user.role }, process.env.JWT_SECRET, {
-			expiresIn: '1h',
-		});
+		const token = jwt.sign(
+			{ id: user.id, role: user.role, username: user.username }, // Добавляем username
+			JWT_SECRET,
+			{ expiresIn: '1h' }
+		);
 
 		res.status(201).json({ message: 'Пользователь зарегистрирован.', token });
 	} catch (error) {
@@ -79,6 +82,15 @@ router.post('/auth/register', async (req, res) => {
 });
 
 
+router.get('/users', async (req, res) => {
+	try {
+		const users = await User.findAll({ attributes: ['id', 'username'] }); // Только id и username
+		res.json(users);
+	} catch (error) {
+		console.error('Ошибка при получении пользователей:', error);
+		res.status(500).json({ error: 'Ошибка при получении списка пользователей.' });
+	}
+});
 
 
 // Маршрут для авторизации пользователя
@@ -96,8 +108,11 @@ router.post('/auth/login', async (req, res) => {
 			return res.status(400).json({ error: 'Неверный логин или пароль.' });
 		}
 
-		const token = jwt.sign({ id: user.id, role: user.role }, JWT_SECRET, { expiresIn: '1h' });
-		res.json({ token });
+		const token = jwt.sign(
+			{ id: user.id, role: user.role, username: user.username }, // Добавляем username
+			JWT_SECRET,
+			{ expiresIn: '1h' }
+		); res.json({ token });
 	} catch (error) {
 		res.status(500).json({ error: 'Ошибка при авторизации пользователя.' });
 	}
@@ -109,15 +124,22 @@ const authenticateToken = (req, res, next) => {
 	if (!token) return res.status(403).json({ error: 'Токен не найден.' });
 
 	jwt.verify(token, JWT_SECRET, (err, user) => {
-		if (err) return res.status(403).json({ error: 'Неверный токен.' });
+		if (err) {
+			console.error('Ошибка валидации токена:', err.message);
+			return res.status(403).json({ error: 'Неверный токен.' });
+		}
+		console.log('Аутентифицированный пользователь:', user);
 		req.user = user;
 		next();
 	});
 };
 
+
 const authorizeRole = (role) => {
 	return (req, res, next) => {
+		console.log('Проверка роли пользователя:', req.user.role);
 		if (req.user.role !== role) {
+			console.error('Нет доступа для роли:', req.user.role);
 			return res.status(403).json({ error: 'Нет доступа' });
 		}
 		next();
@@ -127,14 +149,42 @@ const authorizeRole = (role) => {
 // Маршрут для получения всех колонок и задач
 router.get('/columns', authenticateToken, async (req, res) => {
 	try {
+		console.log('Получение колонок...');
 		const columns = await Column.findAll({
 			include: [{ model: Task, as: 'tasks' }],
 		});
+		console.log('Колонки получены:', columns);
 		res.json(columns);
 	} catch (error) {
+		console.error('Ошибка при получении колонок:', error);
 		res.status(500).json({ error: 'Ошибка при получении колонок.' });
 	}
 });
+
+
+router.post('/columns/set-done', authenticateToken, authorizeRole('admin'), async (req, res) => {
+	const { columnId } = req.body;
+
+	try {
+		// Устанавливаем все колонки как "не Done"
+		await Column.update({ isDone: false }, { where: {} });
+
+		// Если передан columnId, устанавливаем его как "Done"
+		if (columnId) {
+			const column = await Column.findByPk(columnId);
+			if (!column) return res.status(404).json({ error: 'Колонка не найдена' });
+
+			column.isDone = true;
+			await column.save();
+		}
+
+		res.json({ message: 'Статус Done обновлен' });
+	} catch (error) {
+		console.error('Ошибка при обновлении Done-колонки:', error);
+		res.status(500).json({ error: 'Ошибка при обновлении Done-колонки' });
+	}
+});
+
 
 // Маршрут для создания новой колонки
 router.post('/columns', authenticateToken, authorizeRole('admin'), async (req, res) => {
@@ -203,8 +253,17 @@ router.delete('/columns/:id', authenticateToken, authorizeRole('admin'), async (
 // Маршрут для создания новой задачи
 router.post('/tasks', authenticateToken, async (req, res) => {
 	try {
-		const { title, status, createdBy, columnId, assignee, order, userId } = req.body;
-		const task = await Task.create({ title, status, createdBy, columnId, assignee, order, userId });
+		const { title, status, createdBy,
+			columnId, assignee, order,
+			userId, startDate, dueDate,
+			description } = req.body;
+
+		const task = await Task.create({
+			title, status, createdBy
+			, columnId, assignee, order,
+			userId, startDate, dueDate,
+			description
+		});
 		const columns = await Column.findAll({
 			include: [{ model: Task, as: 'tasks' }],
 		});
@@ -218,7 +277,9 @@ router.post('/tasks', authenticateToken, async (req, res) => {
 // Маршрут для обновления задачи
 router.put('/tasks/:id', authenticateToken, async (req, res) => {
 	const { id } = req.params;
-	const { title, status, columnId, assignee, order, userId } = req.body;
+	const { title, status, columnId,
+		assignee, order, userId,
+		startDate, dueDate, description } = req.body;
 
 	try {
 		const task = await Task.findByPk(id);
@@ -232,7 +293,9 @@ router.put('/tasks/:id', authenticateToken, async (req, res) => {
 		task.assignee = assignee;
 		task.order = order;
 		task.userId = userId;
-
+		task.startDate = startDate;
+		task.dueDate = dueDate;
+		task.description = description;
 		await task.save();
 
 		const columns = await Column.findAll({
@@ -334,6 +397,8 @@ app.use('/api', router);
 
 // Синхронизация базы данных и запуск сервера
 syncDatabase().then(() => {
+	console.log('База данных синхронизирована.');
+	console.log(`JWT_SECRET установлен: ${JWT_SECRET ? 'Да' : 'Нет'}`);
 	server.listen(3000, () => {
 		console.log('Сервер запущен на http://localhost:3000');
 	});

@@ -36,5 +36,17 @@ module.exports = (sequelize) => {
 			type: DataTypes.INTEGER,
 			allowNull: true, // Поле для связи задачи с пользователем
 		},
+		startDate: {
+			type: DataTypes.DATEONLY,
+			allowNull: true,
+		},
+		dueDate: {
+			type: DataTypes.DATEONLY,
+			allowNull: true,
+		},
+		description: {
+			type: DataTypes.TEXT,
+			allowNull: true, // Поле может быть пустым
+		},
 	});
 };

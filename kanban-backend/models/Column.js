@@ -1,4 +1,3 @@
-// models/Column.js
 module.exports = (sequelize, DataTypes) => {
 	const Column = sequelize.define('Column', {
 	  title: {
@@ -16,8 +15,18 @@ module.exports = (sequelize, DataTypes) => {
 	  icon: {
 		type: DataTypes.STRING,
 		allowNull: true,
-	  }
+	  },
+	  isDone: {
+		type: DataTypes.BOOLEAN,
+		allowNull: false,
+		defaultValue: false, // По умолчанию ни одна колонка не будет Done
+	  },
 	});
+  
+	Column.associate = (models) => {
+	  Column.hasMany(models.Task, { as: 'tasks', foreignKey: 'columnId' });
+	};
+  
 	return Column;
   };
   

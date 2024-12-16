@@ -40,7 +40,18 @@ export default {
       return null;
     }
   },
+  getUsername: () => {
+    const token = localStorage.getItem(TOKEN_KEY);
+    if (!token) return null;
 
+    try {
+      const payload = JSON.parse(atob(token.split('.')[1])); // Раскодируем токен
+      return payload.username; // Возвращаем имя пользователя из токена
+    } catch (error) {
+      console.error('Ошибка извлечения имени пользователя из токена:', error);
+      return null;
+    }
+  },
   register: async (username, password, role) => {
     const response = await fetch('http://localhost:3000/api/auth/register', {
       method: 'POST',
